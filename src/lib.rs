@@ -3,10 +3,13 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use pumpkin::{
     command::{
-        args::ConsumedArgs, dispatcher::CommandError, tree::builder::literal, tree::CommandTree,
-        CommandExecutor, CommandSender,
+        args::ConsumedArgs,
+        tree::{builder::literal, CommandTree},
+        CommandExecutor, CommandResult, CommandSender,
     },
-    plugin::{player::player_join::PlayerJoinEvent, Context, EventHandler, EventPriority},
+    plugin::{
+        player::player_join::PlayerJoinEvent, BoxFuture, Context, EventHandler, EventPriority,
+    },
     server::Server,
 };
 use pumpkin_api_macros::{plugin_impl, plugin_method, with_runtime};
@@ -17,12 +20,17 @@ use rand::{rng, Rng};
 struct MyJoinHandler;
 
 #[with_runtime(global)]
-#[async_trait]
 impl EventHandler<PlayerJoinEvent> for MyJoinHandler {
-    async fn handle_blocking(&self, _server: &Arc<Server>, event: &mut PlayerJoinEvent) {
-        event.join_message =
-            TextComponent::text(format!("Welcome, {}!", event.player.gameprofile.name))
-                .color_named(NamedColor::Green);
+    fn handle_blocking<'a>(
+        &self,
+        _server: &Arc<Server>,
+        event: &'a mut PlayerJoinEvent,
+    ) -> BoxFuture<'a, ()> {
+        Box::pin(async {
+            event.join_message =
+                TextComponent::text(format!("Welcome, {}!", event.player.gameprofile.name))
+                    .color_named(NamedColor::Green);
+        })
     }
 }
 
@@ -33,58 +41,62 @@ struct RockPaperScissorsExecutor(Choice);
 
 #[async_trait]
 impl CommandExecutor for RockPaperScissorsExecutor {
-    async fn execute<'a>(
-        &self,
-        sender: &mut CommandSender,
-        _: &Server,
-        _: &ConsumedArgs<'a>,
-    ) -> Result<(), CommandError> {
-        let player_choice = self.0;
-        let computer_choice = get_random_choice();
+    fn execute<'a>(
+        &'a self,
+        sender: &'a CommandSender,
+        _: &'a Server,
+        _: &'a ConsumedArgs<'a>,
+    ) -> CommandResult<'a> {
+        Box::pin(async move {
+            let player_choice = self.0;
+            let computer_choice = get_random_choice();
 
-        sender
-            .send_message(
-                TextComponent::text("You chose: ")
-                    .add_text(format!("{:?}", player_choice))
-                    .color_named(NamedColor::Aqua),
-            )
-            .await;
+            sender
+                .send_message(
+                    TextComponent::text("You chose: ")
+                        .add_text(format!("{:?}", player_choice))
+                        .color_named(NamedColor::Aqua),
+                )
+                .await;
 
-        sender
-            .send_message(
-                TextComponent::text("I chose: ")
-                    .add_text(format!("{:?}", computer_choice))
-                    .color_named(NamedColor::Gold),
-            )
-            .await;
+            sender
+                .send_message(
+                    TextComponent::text("I chose: ")
+                        .add_text(format!("{:?}", computer_choice))
+                        .color_named(NamedColor::Gold),
+                )
+                .await;
 
-        match player_choice.beats(&computer_choice) {
-            Outcome::Win => {
-                sender
-                    .send_message(TextComponent::text("You win!").color_named(NamedColor::Green))
-                    .await;
+            match player_choice.beats(&computer_choice) {
+                Outcome::Win => {
+                    sender
+                        .send_message(
+                            TextComponent::text("You win!").color_named(NamedColor::Green),
+                        )
+                        .await;
+                }
+                Outcome::Lose => {
+                    sender
+                        .send_message(TextComponent::text("You lose!").color_named(NamedColor::Red))
+                        .await;
+                }
+                Outcome::Draw => {
+                    sender
+                        .send_message(
+                            TextComponent::text("It's a tie!").color_named(NamedColor::Yellow),
+                        )
+                        .await;
+                }
             }
-            Outcome::Lose => {
-                sender
-                    .send_message(TextComponent::text("You lose!").color_named(NamedColor::Red))
-                    .await;
-            }
-            Outcome::Draw => {
-                sender
-                    .send_message(
-                        TextComponent::text("It's a tie!").color_named(NamedColor::Yellow),
-                    )
-                    .await;
-            }
-        }
 
-        Ok(())
+            Ok(())
+        })
     }
 }
 
 #[plugin_method]
 async fn on_load(&mut self, server: Arc<Context>) -> Result<(), String> {
-    pumpkin::init_log!();
+    server.init_log();
 
     log::info!("Hello, Pumpkin!");
 
